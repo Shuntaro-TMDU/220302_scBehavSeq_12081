@@ -13,7 +13,8 @@ df1_4 = read_csv("12081_ATG_Thrombosis_3_Ly6G.csv")
 df1_5 = read_csv("12081_ATG_Thrombosis_4_Ly6G.csv")
 df1_6 = read_csv("12081_ATG_Thrombosis_5_Ly6G.csv")
 
-df1 = rbind(df1_1, df1_2, df1_3, df1_4, df1_5, df1_6)
+df1 = rbind(df1_1, df1_2, df1_3, df1_4, df1_5, df1_6) %>%
+        print()
 
 View(df1)
 
@@ -21,12 +22,13 @@ df2 = df1 %>%
         select(!c(Metadata_Run...10, Location_Center_X, Location_Center_Y, Location_Center_Z, TrackObjects_Area)) %>%
         rename_with( ~ str_extract(., '(?<=_).+'), .cols = contains('_')) %>%
         rename_with( ~ str_remove(., '...9')) %>%
-        mutate(Species = factor(Pathology, levels = (c("NonThrombosis", "Thrombosis"))))
+        mutate(Species = factor(Pathology, levels = (c("NonThrombosis", "Thrombosis")))) %
 
 # LifeTime < 2や細胞凝集体を取り除く
 df3 = df2 %>% 
         filter(Label != "NaN", 
-               !(Run == 3 & Label == 5))
+               !(Run == 3 & Label == 5)) %>%
+        print()
 View(df3)
 
 # Speed, DistanceTraveled, Linearity, MeanderRatioを集計したdf.K.1を作成
@@ -44,7 +46,8 @@ df.K.1 = df3 %>%
                   Linearity_Mean = mean(Linearity), 
                   Linearity_Std = sd(Linearity), 
                   MeanderRatio_Mean = mean(1 / Linearity), 
-                  MeanderRatio_Std = sd(1 / Linearity)) 
+                  MeanderRatio_Std = sd(1 / Linearity),
+                  .groups = 'drop') 
 
 View(df.K.1)
 
@@ -163,7 +166,8 @@ Make.df.M = function(data = df3,
                                  .names = "{.col}_Mean"),
                           across(ParamM[1]:ParamM[length(ParamM)],
                                  sd,
-                                 .names = "{.col}_Std"))
+                                 .names = "{.col}_Std"), 
+                          .groups = 'drop')
         
         return(df.M)
 }
@@ -176,7 +180,7 @@ View(df.M1)
 df.M2 = Make.df.M(data = df3, 
                   ParamM = M2)
 
-## データの結合とナンバリング
+## データの結合
 Join.df.M.K = function(df.M = df.M1, 
                        df.K.1, 
                        df.K.2){
@@ -211,21 +215,18 @@ missID.2 = df.joined.2 %>%
 View(missID.1)
 View(missID.2)
 
-# 欠損値を含むオブジェクトの行を削除し、ナンバリング
+# 欠損値を含むオブジェクトの行を削除
 df.joined.1.new = df.joined.1 %>%
-        drop_na(everything()) %>%
-        mutate(Order = 1:nrow(.)) %>%
-        relocate(Order, .before = Run)
+        drop_na(everything())
 
 df.joined.2.new = df.joined.2 %>%
-        drop_na(everything()) %>%
-        mutate(Order = 1:nrow(.)) %>%
-        relocate(Order, .before = Run)
+        drop_na(everything())
 
 # Metadataを作成
 df.meta = df3 %>%
-        select(ID, Drug, Pathology, Run, Stain, FrameNumber, Label, Center_X, Center_Y, Lifetime) %>%
-        arrange(Run, Label) # Parameterデータフレーム作成時の並べ替え法則に則る
+        select(ID, Drug, Pathology, Run, Stain, ImageNumber, Label, Center_X, Center_Y, Lifetime) %>%
+        arrange(Run, Label) %>% # Parameterデータフレーム作成時の並べ替え法則に則る
+        print()
 
 View(df.meta)
 

@@ -1,4 +1,4 @@
-setwd("/Users/shuntaro/Documents/R/CW/221229_sc-seq_rIgG,ATG_3241,9292/R_output")
+setwd("/Users/shuntaro/Documents/R/CW/230302_scBehavSeq_12081/R_output")
 getwd()
 
 install.packages("rstatix")
@@ -43,405 +43,205 @@ mytheme2 = theme_bw() +
               strip.text.x = element_text(size=18, family = "Arial", face = "bold"), 
               strip.text.y = element_text(size=18, family = "Arial", face = "bold"))
 
+df.joined.2.new = read_csv("12081_ATG_Ly6G_Parameters_M2.csv")
 
-df1 = read_csv("9292_rIgG_24hr_Neutrophil.csv")
-df2 = read_csv("3241_ATG_3hr_Neutrophil.csv")
-df3 = read_csv("3241_ATG_24hr_Neutrophil.csv")
+df.annotation = read_csv("12081_ATG_Ly6G_Annotation.csv") %>%
+        mutate(Order = as.integer(Order), 
+               Cluster = factor(Cluster, levels = c("1", "2"))) %>%
+        print()
 
-df4 = read_csv("9292_rIgG_24hr_Metadata.csv")
-df5 = read_csv("3241_ATG_3hr_Metadata.csv")
-df6 = read_csv("3241_ATG_24hr_Metadata.csv")
+# クラスター間で有意（>0.25: log scale）に変化しているパラメータを検索する。
+## df.joined.2.newとdf.annotationをOrderをアンカーにして結合
+df.joined.2.hc = df.joined.2.new %>%
+        full_join(df.annotation, by = "Order") %>%
+        relocate(Cluster, .after = Label)
 
-hc.clusters.4 = read_csv("hc4.csv")
-
-df.joined = rbind(df1, df2, df3)%>%
-        mutate(Condition = factor(Condition, levels = (c("rIgG_24hr", "ATG_3hr", "ATG_24hr"))))
-
-df.meta = rbind(df4, df5, df6) %>%
-        mutate(Condition = factor(Condition, levels = (c("rIgG_24hr", "ATG_3hr", "ATG_24hr"))))
-
-nrow(df.joined)
-nrow(df.meta)
-
-df.joined.hc4 = df.joined %>%
-        cbind(Cluster = hc.clusters.4) %>%
-        mutate(Cluster = factor(Cluster, levels = c(1, 2, 3, 4)))
-
-str(df.joined.hc4)
-
-write_csv(df.joined.hc4, "Neutrophil_hc4.csv")
-
-# metadataから、Lifetime = 1のオブジェクトのみを抽出
-df.meta.1 = df.meta.new %>%
-        filter(Lifetime == 1)
-
-df.meta.hc2.2 = df.meta.1 %>%
-        bind_cols(., HcRes2.2)
-
-# 各パラメータのクラスター毎の平均を求める
-df.joined.hc4.mean = df.joined.hc4 %>%
+## クラスターごとのパラメータの平均値を計算
+df.joined.2.hc.mean = df.joined.2.hc %>%
         group_by(Cluster) %>%
-        summarize_at(vars(Area_Mean:MeanderRatio), mean)
+        summarise(across(Area_Mean:IntegratedDistance, mean)) %>%
+        print()
 
-View(df.joined.hc4.mean)
+df.joined.2.hc.mean.t = t(as.matrix(df.joined.2.hc.mean))
+colnames(df.joined.2.hc.mean.t) = c("Cluster_1", "Cluster_2")
 
-# 可視化
-print(best.list)
-# [1] "Perimeter_Mean"          "BoundingBoxArea_Std"     "EquivalentDiameter_Mean"
-# [4] "Solidity_Std"            "MedianRadius_Mean"       "Compactness_Std"        
-# [7] "Linearity"               "FormFactor_Std"          "Eccentricity_Mean"      
-# [10] "Area_Mean"               "Area_Std"                "IntegratedDistance"     
-# [13] "Speed_Max"               "Speed_Std"  
 
-## Area_Mean
-p1 = ggplot(df.joined.hc4) +
-        mytheme1 +
-        theme(plot.margin = unit(c(1, 1, 1, 1), "lines"))
+df.joined.2.hc.mean.t = df.joined.2.hc.mean %>%
+        mutate(Cluster = str_c("Cluster", Cluster, sep = "_")) %>%
+        pivot_longer(!Cluster, names_to = "Variable", values_to = "value") %>%
+        pivot_wider(names_from = Cluster)
+
+df.joined.2.hc.summary = df.joined.2.hc.mean.t %>%
+        mutate(loge_fold = log(Cluster_2 / Cluster_1), 
+               abs_loge_fold = abs(loge_fold)) %>%
+        arrange(-abs_loge_fold) %>%
+        print()
+
+write_csv(df.joined.2.hc.summary, "12081_ATG_Ly6G_Hc2_Summary.csv")
+
+Top10.param = c("Displacement", 
+               "DistanceTraveled_Max", 
+               "Speed_Max", 
+               "DistanceTraveled_Std", 
+               "Speed_Std", 
+               "IntegratedDistance", 
+               "DistanceTraveled_Mean", 
+               "Speed_Mean", 
+               "MajorAxisLength_Std", 
+               "Area_Std")
+
+# Top5.paramをクラスター間で比較する
+## 指定したパラメータのtukey's t-test結果を表示する関数anova.pwcを作成する。
+tukey = function(data = df.joined.2.hc, 
+                     parameter){
         
-p2_1 = p1 +
-        aes(x = Cluster, y = Area_Mean) +
-        geom_violin(aes(fill = Cluster), 
-                    trim = FALSE) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
+        tukey.param = tukey_hsd(data, as.formula(paste0(parameter, "~ Cluster")))
+        
+        return(tukey.param)
+}
 
-p2_1
-p2_2 = p2_1 + 
-        geom_point(data = df.joined.hc4.mean,
-                   aes(x = Cluster, y = Area_Mean),
-                   size = 2) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p2_2
-aov.AreaMean =  anova_test(df.joined.hc4, Area_Mean ~ Cluster)
-print(aov.AreaMean)
+tukey.Displacement = tukey(df.joined.2.hc, 
+                                   parameter = "Displacement")
+tukey.Displacement
 
-pwc.AreaMean = tukey_hsd(df.joined.hc4, Area_Mean ~ Cluster)
-print(pwc.AreaMean)
+## 指定したパラメータのavova結果を反映したviolin plotを表示する関数PlotViolinを作成する。
+PlotViolin = function(data_full = df.joined.2.hc, 
+                      data_mean = df.joined.2.hc.mean, 
+                      parameter = parameter, 
+                      pvalue.y.position = pvalue.y.position){
+        
+        pwc.param = tukey_hsd(data_full, as.formula(paste0(parameter, "~ Cluster")))
+        
+        p1 = ggplot(data_full) +
+                mytheme1 +
+                theme(plot.margin = unit(c(1, 1, 1, 1), "lines"))
+        
+        p2_1 = p1 +
+                aes(x = Cluster, y = .data[[parameter]]) +
+                geom_violin(aes(fill = Cluster), 
+                            trim = FALSE, 
+                            adjust = 1) +
+                theme(axis.title.x = element_blank(), 
+                      axis.ticks.x = element_blank(), 
+                      axis.text.x = element_blank(), 
+                      legend.position = "right", 
+                      legend.justification = "top")
+        
+        p2_2 = p2_1 + 
+                geom_point(data = data_mean,
+                           aes(x = Cluster, y = .data[[parameter]]),
+                           size = 2) +
+                theme(axis.title.x = element_blank(), 
+                      axis.ticks.x = element_blank(), 
+                      axis.text.x = element_blank())
+        
+        ViolinPlot = p2_2 +
+                stat_pvalue_manual(pwc.param[pwc.param$term == "Cluster", ], 
+                                   label = "P = {p.adj}", 
+                                   y.position = pvalue.y.position, 
+                                   step.increase = 0.1, 
+                                   tip.length = 0, 
+                                   hide.ns = TRUE)
+        
+        return(ViolinPlot)
+}
 
-p2_3 = p2_2 +
-        stat_pvalue_manual(pwc.AreaMean[pwc.AreaMean$term == "Cluster", ], 
-                           label = "P = {p.adj}", 
-                           y.position = 200, 
-                           step.increase = 0.1, 
-                           tip.length = 0, 
-                           hide.ns = TRUE)
+### Displacement
+ViolinPlot.Displacement = PlotViolin(data_full = df.joined.2.hc, 
+                                     data_mean = df.joined.2.hc.mean,
+                                     parameter = "Displacement", 
+                                     pvalue.y.position = 180)
 
-p2_3
+ViolinPlot.Displacement
+ggsave("Violin_Displacement.tiff", width = 5, height = 5)
 
-## Area_Std
-p3_1 = p1 + aes(x = Cluster, y = Area_Std) +
-        geom_violin(aes(fill = Cluster), 
-                    trim = FALSE) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p3_1
+### DistanceTraveled_Max
+ViolinPlot.DistanceTraveled_Max = PlotViolin(parameter = "DistanceTraveled_Max", 
+                                     pvalue.y.position = 60)
 
-p3_2 = p3_1 + 
-        geom_point(data = df.joined.hc4.mean,
-                       aes(x = Cluster, y = Area_Std),
-                       size = 2) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p3_2
+ViolinPlot.DistanceTraveled_Max
+ggsave("Violin_DistanceTraveled_Max.tiff", width = 5, height = 5)
 
-aov.AreaStd =  anova_test(df.joined.hc4, Area_Std ~ Cluster)
-print(aov.AreaStd)
+### Speed_Max
+ViolinPlot.Speed_Max = PlotViolin(parameter = "Speed_Max", 
+                                  pvalue.y.position = 20)
 
-pwc.AreaStd = tukey_hsd(df.joined.hc4, Area_Std ~ Cluster)
-print(pwc.AreaStd)
+ViolinPlot.Speed_Max
+ggsave("Violin_Speed_Max.tiff", width = 5, height = 5)
 
-p3_3 = p3_2 +
-        stat_pvalue_manual(pwc.AreaStd[pwc.AreaStd$term == "Cluster", ], 
-                           label = "P = {p.adj}", 
-                           y.position = 80, 
-                           step.increase = 0.1, 
-                           tip.length = 0, 
-                           hide.ns = TRUE)
+### DistanceTraveled_Std
+ViolinPlot.DistanceTraveled_Std = PlotViolin(parameter = "DistanceTraveled_Std", 
+                                             pvalue.y.position = 20)
 
-p3_3
+ViolinPlot.DistanceTraveled_Std
+ggsave("Violin_DistanceTraveled_Std.tiff", width = 5, height = 5)
 
-# Solidity_Std
-p4_1 = p1 + aes(x = Cluster, y = Solidity_Std) +
-        geom_violin(aes(fill = Cluster), trim = FALSE) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p4_1
+### Speed_Std
+ViolinPlot.Speed_Std = PlotViolin(parameter = "Speed_Std", 
+                                             pvalue.y.position = 6)
 
-p4_2 = p4_1 + 
-        geom_point(data = df.joined.hc4.mean,
-                         aes(x = Cluster, y = Solidity_Std),
-                         size = 2) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p4_2
+ViolinPlot.Speed_Std
+ggsave("Violin_Speed_Std.tiff", width = 5, height = 5)
 
-aov.SolidityStd =  anova_test(df.joined.hc4, Solidity_Std ~ Cluster)
-print(aov.SolidityStd)
+### IntegratedDistance
+ViolinPlot.IntegratedDistance = PlotViolin(parameter = "IntegratedDistance", 
+                                             pvalue.y.position = 200)
 
-pwc.SolidityStd = tukey_hsd(df.joined.hc4, Solidity_Std ~ Cluster)
-print(pwc.SolidityStd)
+ViolinPlot.IntegratedDistance
+ggsave("Violin_IntegratedDistance.tiff", width = 5, height = 5)
 
-p4_3 = p4_2 +
-        stat_pvalue_manual(pwc.SolidityStd[pwc.SolidityStd$term == "Cluster", ], 
-                           label = "P = {p.adj}", 
-                           y.position = 0.1, 
-                           step.increase = 0.1, 
-                           tip.length = 0, 
-                           hide.ns = TRUE)
+### MajorAxisLength_Std
+ViolinPlot.MajorAxisLength_Std = PlotViolin(parameter = "MajorAxisLength_Std", 
+                                           pvalue.y.position = 10)
 
-p4_3
+ViolinPlot.MajorAxisLength_Std
+ggsave("Violin_MajorAxisLength_Std.tiff", width = 5, height = 5)
 
-# Compactness_Std
-p5_1 = p1 + aes(x = Cluster, y = Compactness_Std) +
-        geom_violin(aes(fill = Cluster), trim = FALSE) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p5_1
+### EquivalentDiameter_Mean
+summary(df.joined.2.hc$EquivalentDiameter_Mean)
+summary(df.joined.2.hc$EquivalentDiameter_Std)
+ViolinPlot.EquivalentDiameter_Mean = PlotViolin(parameter = "EquivalentDiameter_Mean", 
+                                 pvalue.y.position = 120)
 
-p5_2 = p5_1 + 
-        geom_point(data = df.joined.hc4.mean,
-                   aes(x = Cluster, y = Compactness_Std),
-                   size = 2) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p5_2
+ViolinPlot.EquivalentDiameter_Mean
+ggsave("Violin_EquivalentDiameter_Mean.tiff", width = 5, height = 5)
 
-aov.CompactnessStd =  anova_test(df.joined.hc4, Compactness_Std ~ Cluster)
-print(aov.CompactnessStd)
+### Area_Std
+ViolinPlot.Area_Std = PlotViolin(parameter = "Area_Std", 
+                                      pvalue.y.position = 120)
 
-pwc.CompactnessStd = tukey_hsd(df.joined.hc4, Compactness_Std ~ Cluster)
-print(pwc.CompactnessStd)
+ViolinPlot.Area_Std
+ggsave("Violin_Area_Std.tiff", width = 5, height = 5)
 
-p5_3 = p5_2 +
-        stat_pvalue_manual(pwc.CompactnessStd[pwc.CompactnessStd$term == "Cluster", ], 
-                           label = "P = {p.adj}", 
-                           y.position = 0.5, 
-                           step.increase = 0.1, 
-                           tip.length = 0, 
-                           hide.ns = TRUE)
+### Perimeter_Std
+ViolinPlot.Perimeter_Std = PlotViolin(parameter = "Perimeter_Std", 
+                                            pvalue.y.position = 20)
 
-p5_3
+ViolinPlot.Perimeter_Std
+ggsave("Violin_Perimeter_Std.tiff", width = 5, height = 5)
 
-# Eccentricity_Mean
-p6_1 = p1 + aes(x = Cluster, y = Eccentricity_Mean) +
-        geom_violin(aes(fill = Cluster), trim = FALSE) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p6_1
+### Eccentricity_Std
+ViolinPlot.Eccentricity_Std = PlotViolin(parameter = "Eccentricity_Std", 
+                                      pvalue.y.position = 0.4)
 
-p6_2 = p6_1 + 
-        geom_point(data = df.joined.hc4.mean,
-                   aes(x = Cluster, y = Eccentricity_Mean),
-                   size = 2) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p6_2
+ViolinPlot.Eccentricity_Std
+ggsave("Violin_Eccentricity_Std.tiff", width = 5, height = 5)
 
-aov.EccentricityMean =  anova_test(df.joined.hc4, Eccentricity_Mean ~ Cluster)
-print(aov.EccentricityMean)
+### Solidity_Std
+ViolinPlot.Solidity_Std = PlotViolin(parameter = "Solidity_Std", 
+                                         pvalue.y.position = 0.1)
 
-pwc.EccentricityMean = tukey_hsd(df.joined.hc4, Eccentricity_Mean ~ Cluster)
-print(pwc.EccentricityMean)
-
-p6_3 = p6_2 +
-        stat_pvalue_manual(pwc.EccentricityMean[pwc.EccentricityMean$term == "Cluster", ], 
-                           label = "P = {p.adj}", 
-                           y.position = 0.9, 
-                           step.increase = 0.1, 
-                           tip.length = 0, 
-                           hide.ns = TRUE)
-
-p6_3
-
-# FormFactor_Std
-p7_1 = p1 + aes(x = Cluster, y = FormFactor_Std) +
-        geom_violin(aes(fill = Cluster), trim = FALSE) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p7_1
-
-p7_2 = p7_1 + 
-        geom_point(data = df.joined.hc4.mean,
-                   aes(x = Cluster, y = FormFactor_Std),
-                   size = 2) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p7_2
-
-aov.FormFactorStd =  anova_test(df.joined.hc4, FormFactor_Std ~ Cluster)
-print(aov.FormFactorStd)
-
-pwc.FormFactorStd = tukey_hsd(df.joined.hc4, FormFactor_Std ~ Cluster)
-print(pwc.FormFactorStd)
-
-p7_3 = p7_2 +
-        stat_pvalue_manual(pwc.FormFactorStd[pwc.FormFactorStd$term == "Cluster", ], 
-                           label = "P = {p.adj}", 
-                           y.position = 0.3, 
-                           step.increase = 0.1, 
-                           tip.length = 0, 
-                           hide.ns = TRUE)
-
-p7_3
-
-# Speed_Max
-p8_1 = p1 + aes(x = Cluster, y = Speed_Max) +
-        geom_violin(aes(fill = Cluster), trim = FALSE) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p8_1
-
-p8_2 = p8_1 + 
-        geom_point(data = df.joined.hc4.mean,
-                   aes(x = Cluster, y = Speed_Max),
-                   size = 2) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p8_2
-
-aov.SpeedMax =  anova_test(df.joined.hc4, Speed_Max ~ Cluster)
-print(aov.SpeedMax)
-
-pwc.SpeedMax = tukey_hsd(df.joined.hc4, Speed_Max ~ Cluster)
-print(pwc.SpeedMax)
-
-p8_3 = p8_2 +
-        stat_pvalue_manual(pwc.SpeedMax[pwc.SpeedMax$term == "Cluster", ], 
-                           label = "P = {p.adj}", 
-                           y.position = 2, 
-                           step.increase = 0.1, 
-                           tip.length = 0, 
-                           hide.ns = TRUE)
-
-p8_3
-
-# Speed_Std
-p9_1 = p1 + aes(x = Cluster, y = Speed_Std) +
-        geom_violin(aes(fill = Cluster), trim = FALSE) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p9_1
-
-p9_2 = p9_1 + 
-        geom_point(data = df.joined.hc4.mean,
-                   aes(x = Cluster, y = Speed_Std),
-                   size = 2) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p9_2
-
-aov.SpeedStd =  anova_test(df.joined.hc4, Speed_Std ~ Cluster)
-print(aov.SpeedStd)
-
-pwc.SpeedStd = tukey_hsd(df.joined.hc4, Speed_Std ~ Cluster)
-print(pwc.SpeedStd)
-
-p9_3 = p9_2 +
-        stat_pvalue_manual(pwc.SpeedStd[pwc.SpeedStd$term == "Cluster", ], 
-                           label = "P = {p.adj}", 
-                           y.position = 0.4, 
-                           step.increase = 0.1, 
-                           tip.length = 0, 
-                           hide.ns = TRUE)
-
-p9_3
-
-# IntegratedDistance
-p10_1 = p1 + aes(x = Cluster, y = IntegratedDistance) +
-        geom_violin(aes(fill = Cluster), trim = FALSE) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p10_1
-
-p10_2 = p10_1 + 
-        geom_point(data = df.joined.hc4.mean,
-                   aes(x = Cluster, y = IntegratedDistance),
-                   size = 2) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p10_2
-
-aov.IntegratedDistance =  anova_test(df.joined.hc4, IntegratedDistance ~ Cluster)
-print(aov.IntegratedDistance)
-
-pwc.IntegratedDistance = tukey_hsd(df.joined.hc4, IntegratedDistance ~ Cluster)
-print(pwc.IntegratedDistance)
-
-p10_3 = p10_2 +
-        stat_pvalue_manual(pwc.IntegratedDistance[pwc.IntegratedDistance$term == "Cluster", ], 
-                           label = "P = {p.adj}", 
-                           y.position = 100, 
-                           step.increase = 0.1, 
-                           tip.length = 0, 
-                           hide.ns = TRUE)
-
-p10_3
-
-# Linearity
-p11_1 = p1 + aes(x = Cluster, y = Linearity) +
-        geom_violin(aes(fill = Cluster), trim = FALSE) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p11_1
-
-p11_2 = p11_1 + 
-        geom_point(data = df.joined.hc4.mean,
-                   aes(x = Cluster, y = Linearity),
-                   size = 2) +
-        theme(axis.title.x = element_blank(), 
-              axis.ticks.x = element_blank(), 
-              axis.text.x = element_blank())
-p11_2
-
-aov.Linearity =  anova_test(df.joined.hc4, Linearity ~ Cluster)
-print(aov.Linearity)
-
-pwc.Linearity = tukey_hsd(df.joined.hc4, Linearity ~ Cluster)
-print(pwc.Linearity)
-
-p11_3 = p11_2 +
-        stat_pvalue_manual(pwc.Linearity[pwc.Linearity$term == "Cluster", ], 
-                           label = "P = {p.adj}", 
-                           y.position = 100, 
-                           step.increase = 0.1, 
-                           tip.length = 0, 
-                           hide.ns = TRUE)
-
-p11_3
+ViolinPlot.Solidity_Std
+ggsave("Violin_Solidity_Std.tiff", width = 5, height = 5)
 
 # 全パラメータのviolin plotをまとめて表示
-plot_grid(p2_3 + theme(legend.position = "none"), 
-          p3_3 + theme(legend.position = "none"), 
-          p4_3 + theme(legend.position = "none"), 
-          p5_3 + theme(legend.position = "none"), 
-          p6_3 + theme(legend.position = "none"), 
-          p7_3 + theme(legend.position = "none"), 
-          p8_3 + theme(legend.position = "none"), 
-          p9_3 + theme(legend.position = "none"), 
-          p10_3 + theme(legend.position = "none"), 
-          p11_3 + theme(legend.position = "right", 
+plot_grid(ViolinPlot.Speed_Max + theme(legend.position = "none"), 
+          ViolinPlot.Speed_Std + theme(legend.position = "none"), 
+          ViolinPlot.Area_Std + theme(legend.position = "none"), 
+          ViolinPlot.Eccentricity_Std + theme(legend.position = "none"), 
+          ViolinPlot.Solidity_Std + theme(legend.position = "right", 
                         legend.justification = "top"), 
-          nrow = 3, 
-          ncol = 4,
-          rel_widths = c(1, 1.2, 1, 1))
-ggsave("violin.best.pwc.tiff", width = 20, height = 20)          
+          nrow = 2, 
+          ncol = 3,
+          rel_widths = c(1, 1.2, 1))
+ggsave("Violin_Top.tiff", width = 15, height = 10)          

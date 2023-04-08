@@ -57,7 +57,10 @@ summary(df.annotation)
 
 # metadataから、Lifetime = 1のオブジェクトのみを抽出
 df.meta.1 = df.meta.new %>%
-        filter(Lifetime == 1)
+        filter(Lifetime == 1) %>%
+        mutate(Order = 1:102) %>%
+        relocate(Order, .after = Label) %>%
+        print()
 
 head(df.meta.1)
 
