@@ -1,0 +1,86 @@
+---
+title: "regression"
+format: html
+editor: visual
+---
+
+```{r, setup, include = FALSE}
+library(conflicted)
+library(tidyverse)
+knitr::opts_knit$set(root.dir = "/Users/shuntaro/Documents/R/CW/230302_scBehavSeq_12081/R_output")
+getwd()
+
+set.seed(2022)
+
+mytheme1 <- theme(panel.background = element_blank(),
+                  plot.margin = unit(c(1, 1, 0, 1), "lines"),
+                  plot.title = element_text(hjust = 0.5, size=20, family = "Arial", face = "bold"),
+                  axis.line = element_line(size = 0.7),
+                  axis.ticks = element_line(size = 0.7), 
+                  axis.title = element_text(size=20, family = "Arial", face = "bold"), 
+                  axis.text = element_text(size=20, color = "black", family = "Arial", face = "bold"), 
+                  legend.position = "top", 
+                  legend.key = element_rect(fill = "white"), 
+                  legend.title = element_text(size = 20, family = "Arial", face = "bold"),
+                  legend.text = element_text(size = 20, family = "Arial", face = "bold"), 
+                  strip.background = element_rect(colour = "black", fill = "white"), 
+                  strip.text.x = element_text(size=18, family = "Arial", face = "bold"), 
+                  strip.text.y = element_text(size=18, family = "Arial", face = "bold"))
+
+mytheme2 = theme_bw() + 
+        theme(panel.background = element_blank(),
+              plot.margin = unit(c(1, 1, 0, 1), "lines"),
+              plot.title = element_text(hjust = 0.5, size=20, family = "Arial", face = "bold"),
+              axis.title = element_text(size=20, family = "Arial", face = "bold"), 
+              axis.text = element_text(size=20, color = "black", family = "Arial", face = "bold"), 
+              panel.grid = element_blank(),
+              legend.position = "right", 
+              legend.justification = "top",
+              legend.key = element_rect(fill = "white"), 
+              legend.title = element_text(size = 20, family = "Arial", face = "bold"),
+              legend.text = element_text(size = 20, family = "Arial", face = "bold"), 
+              strip.background = element_rect(colour = "black", fill = "white"), 
+              strip.text.x = element_text(size=18, family = "Arial", face = "bold"), 
+              strip.text.y = element_text(size=18, family = "Arial", face = "bold"))
+```
+
+## データ読み込み
+
+```{r}
+df.meta.new = read_csv("12081_ATG_Ly6G_Metadata.csv")
+df.normalized.2 = read_csv("12081_ATG_Ly6G_Normalized_M2.csv")
+```
+
+## データ整形
+
+```{r}
+# metadataから、Lifetime = 1のオブジェクトのみを抽出
+df.meta.1 = df.meta.new |>
+        dplyr::filter(Lifetime == 1) |>
+        mutate(Order = 1:102) |>
+        relocate(Order, .after = Label) |>
+        print()
+
+# metadataからPathology列を抽出し、df.normalized.2と結合する。
+# Pathology列の目的変数Thrombosis、NonThrombosisをそれぞれ1, 0に変換する。
+df.patho.2 = bind_cols(df.meta.1$Pathology, df.normalized.2) |>
+        rename(Pathology = "...1") |>
+        mutate(Pathology = case_when(Pathology == "Thrombosis" ~ 1, 
+                                     Pathology == "NonThrombosis" ~ 0)) |>
+        print()
+table(df.patho.2$Pathology)
+```
+
+## 重回帰
+
+一般化線型モデルを用いたロジスティック回帰（確立分布：二項分布、リンク関数：logit関数）を行う。
+
+```{r}
+fit1 = glm(Pathology ~., 
+           family = binomial(link = logit),
+           data = df.patho.2)
+step.fit1 = step(fit1)
+summaryStep.fit1 = summary(step.fit1)
+
+broom::tidy(step.fit1)
+```
