@@ -4,10 +4,16 @@ format: html
 editor: visual
 ---
 
-```{r, setup, include = FALSE}
+```{r setup, include = FALSE}
 library(conflicted)
 library(tidyverse)
-knitr::opts_knit$set(root.dir = "/Users/shuntaro/Documents/R/CW/230302_scBehavSeq_12081/R_output")
+library(rstatix)
+library(ggpubr)
+library(cowplot)
+library(caret)
+library(car)
+library(glmnet)
+
 getwd()
 
 set.seed(2022)
@@ -47,7 +53,10 @@ mytheme2 = theme_bw() +
 ## データ読み込み
 
 ```{r}
+setwd("/Users/shuntaro/Documents/R/CW/230302_scBehavSeq_12081/R_output")
+getwd()
 df.meta.new = read_csv("12081_ATG_Ly6G_Metadata.csv")
+df.raw.2 = read_csv("12081_ATG_Ly6G_Parameters_M2.csv")
 df.normalized.2 = read_csv("12081_ATG_Ly6G_Normalized_M2.csv")
 ```
 
@@ -62,25 +71,424 @@ df.meta.1 = df.meta.new |>
         print()
 
 # metadataからPathology列を抽出し、df.normalized.2と結合する。
-# Pathology列の目的変数Thrombosis、NonThrombosisをそれぞれ1, 0に変換する。
 df.patho.2 = bind_cols(df.meta.1$Pathology, df.normalized.2) |>
         rename(Pathology = "...1") |>
-        mutate(Pathology = case_when(Pathology == "Thrombosis" ~ 1, 
-                                     Pathology == "NonThrombosis" ~ 0)) |>
+        mutate(Pathology = factor(Pathology, 
+                                  levels = c("Thrombosis", "NonThrombosis"))) |>
         print()
-table(df.patho.2$Pathology)
 ```
 
-## 重回帰
+## 訓練・テストデータの分割
+
+```{r}
+# df.patho.2データセットの75%を訓練データ、残りの25%をテストデータにする。
+ind_train = createDataPartition(y = df.patho.2$Pathology, 
+                                p = 0.75, 
+                                list = FALSE)
+data_train = df.patho.2[ind_train, ]
+data_test = df.patho.2[-ind_train, ]
+
+mean(data_train$Pathology)
+mean(data_test$Pathology)
+```
+
+## ステップワイズ法でパラメータ選択を行ったロジスティック回帰モデルの作成
+
+### 全パラメータを用いた重回帰
 
 一般化線型モデルを用いたロジスティック回帰（確立分布：二項分布、リンク関数：logit関数）を行う。
 
 ```{r}
+# glm関数用に、df.patho.2のPathology列の目的変数Thrombosis、NonThrombosisをそれぞれ1, 0（dbl型）に変換する。
+df.patho.2.dbl = df.patho.2 |>
+        mutate(Pathology = case_when(Pathology == "Thrombosis" ~ 1, 
+                                     Pathology == "NonThrombosis" ~ 0)) |>
+        print()
+table(df.patho.2.dbl$Pathology)
 fit1 = glm(Pathology ~., 
            family = binomial(link = logit),
-           data = df.patho.2)
-step.fit1 = step(fit1)
-summaryStep.fit1 = summary(step.fit1)
+           data = df.patho.2.dbl)
+```
 
+### ステップワイズ法でパラメータ抽出
+
+```{r}
+step.fit1 = step(fit1)
+car::vif(step.fit1)
+
+summary(step.fit1)
 broom::tidy(step.fit1)
+broom::glance(step.fit1)
+```
+
+```{r}
+# caretパッケージのtrain関数を用いてロジスティック回帰モデルを作成。
+## step関数と相関係数マトリクスを参照して選択したパラメータを用いる。
+modelLookup("glm")
+glm = train(data = data_train, 
+             Pathology ~ MajorAxisLength_Mean +
+                    MaxFeretDiameter_Mean +
+                    EquivalentDiameter_Std +
+                    MajorAxisLength_Std +
+                    MaxFeretDiameter_Std +
+                    Perimeter_Std +
+                    MeanderRatio_Mean +
+                     IntegratedDistance, 
+             method = "glm", 
+             family = "binomial", 
+             trControl = trainControl(method = "cv"))
+glm
+summary(glm)
+```
+
+### McFadden決定係数の計算
+
+```{r}
+y_train = data_train |>
+        select(Pathology) |>
+        mutate(Pathology = case_when(Pathology == "Thrombosis" ~ 1, 
+                                     Pathology == "NonThrombosis" ~ 0)) |>
+        print()
+# 予測確率の取得: predict関数を使用して、トレーニングデータに対する予測確率を取得する。
+## type引数を"prob"に設定することで、予測確率が取得される。
+## data_train$Pathologyをラベル列として結合する。
+predicted_prob_glm = predict(glm, data_train, type = "prob") |>
+        bind_cols(y_train) |>
+        print()
+
+# モデルの対数尤度の計算: 予測確率を使用して、モデルの対数尤度を計算する。ロジスティック回帰モデルの対数尤度は、以下の式で計算される。
+log_likelihood_glm = sum(predicted_prob_glm[, "Pathology"] * 
+                                 log(predicted_prob_glm[, "Thrombosis"]) + 
+                                 (1 - predicted_prob_glm[, "Pathology"]) * 
+                                 log(1 - predicted_prob_glm[, "Thrombosis"]))
+log_likelihood_glm
+
+# Nullモデルの対数尤度の計算: Nullモデルの対数尤度を計算する。Nullモデルは、全てのサンプルが一つのクラスに所属すると予測するモデルであり、ロジスティック回帰モデルの切片項のみからなるモデル。
+
+null_model_prob_glm = rep(mean(as.matrix(y_train)), length(as.matrix(y_train)))
+null_model_prob_glm
+
+null_model_log_likelihood_glm = sum(as.matrix(y_train) * 
+                                            log(null_model_prob_glm) + 
+                                            (1 - as.matrix(y_train)) * 
+                                            log(1 - null_model_prob_glm))
+null_model_log_likelihood_glm
+
+# McFaddenの決定係数の計算: McFaddenの決定係数は、以下の式で計算される。
+mcfadden_r2_glm = 1 - (log_likelihood_glm / null_model_log_likelihood_glm)
+mcfadden_r2_glm
+```
+
+McFaddenの決定係数は、LRI (likelyhood ratio index)とも呼ばれ、0から1の範囲で値を取る。1に近いほどモデルの予測性能が高いことを示す。
+
+### テストデータに対する予測精度の検証
+
+```{r}
+pred_glm = predict(glm, data_test)
+head(pred_glm)
+confusionMatrix(reference = data_test$Pathology, 
+                data = pred_glm, 
+                mode = "everything", 
+                positive = "Thrombosis")
+```
+
+## マニュアルでパラメータ選択を行ったロジスティック回帰モデルの作成
+
+### 各パラメータを単独で用いて生成したロジスティック回帰モデルのLRIの比較
+
+```{r}
+# パラメータごとにループを回す
+results = list() # 結果を保存するリストを初期化
+params = df.patho.2 |>
+        select(-Pathology) |>
+        colnames() |> # 使用するパラメータの列名を取得
+        print()
+
+for (param in params) {
+  # ロジスティック回帰モデルを生成
+  formula = as.formula(paste0("Pathology ~ ", param))
+  model = train(formula, 
+                data = df.patho.2, 
+                method = "glm", 
+                family = "binomial", 
+                trControl = trainControl(method = "none"))
+
+  # McFadden決定係数を計算
+  null_deviance = model$finalModel$null.deviance # Nullモデルの逸脱度
+  deviance = model$finalModel$deviance # フルモデルの逸脱度
+  mcfadden_r2 = 1 - (deviance / null_deviance) # McFadden決定係数
+
+  # 結果をリストに保存
+  results[[param]] = mcfadden_r2
+}
+results
+
+# 結果をデータフレームに変換し、LRI順に並べ替える
+results_df = as_tibble(results) |>
+        pivot_longer(cols = c(Area_Mean:IntegratedDistance), names_to = "param", values_to = "LRI") |>
+        arrange(-LRI) |>
+        print()
+```
+
+各パラメータのLRIと相関係数を参考に、以下のパラメータを選択した。
+
+-   Displacement
+
+-   MeanRadius_Std
+
+-   Eccentricity_Std
+
+```{r}
+# caretパッケージのtrain関数を用いてロジスティック回帰モデルを作成。
+glmManual = train(data = data_train, 
+             Pathology ~ Displacement +
+                    MeanRadius_Std +
+                     Eccentricity_Std, 
+             method = "glm", 
+             family = binomial(), 
+             trControl = trainControl(method = "cv"))
+glmManual
+summary(glmManual)
+```
+
+### 抽出されたパラメータのラベルごとの比較
+
+```{r}
+# 標準化する前のパラメータ表とメタデータのPathology列を結合したデータフレームdf.patho.2.rawを作成。
+df.patho.2.raw = bind_cols(df.meta.1$Pathology, df.raw.2) |>
+        rename(Pathology = "...1") |>
+        mutate(Pathology = factor(Pathology, 
+                                  levels = c("NonThrombosis", "Thrombosis"))) |>
+        print()
+
+# クラスターごとのパラメータの平均値を計算
+df.patho.2.mean = df.patho.2.raw %>%
+        group_by(Pathology) %>%
+        summarise(across(Area_Mean:IntegratedDistance, mean)) %>%
+        print()
+
+# 指定したパラメータのavova結果を反映したviolin plotを表示する関数PlotViolinを作成する。
+PlotViolin = function(data_full = df.patho.2.raw,
+                      data_mean = df.patho.2.mean,
+                      parameter = parameter, 
+                      pvalue.y.position = pvalue.y.position){
+        pwc.param = tukey_hsd(data_full, as.formula(paste0(parameter, "~ Pathology")))
+        
+        p1 = ggplot() +
+                mytheme1 +
+                theme(plot.margin = unit(c(1, 1, 1, 1), "lines"))
+        
+        p2_1 = p1 +
+                aes(x = Pathology, y = .data[[parameter]]) +
+                geom_violin(data = data_full, 
+                            aes(fill = Pathology), 
+                            trim = FALSE, 
+                            adjust = 1) +
+                theme(axis.title.x = element_blank(), 
+                      axis.ticks.x = element_blank(), 
+                      axis.text.x = element_blank(), 
+                      legend.position = "right", 
+                      legend.justification = "top")
+        p2_2 = p2_1 + 
+                geom_point(data = data_mean,
+                           aes(x = Pathology, y = .data[[parameter]]),
+                           size = 2) +
+                theme(axis.title.x = element_blank(), 
+                      axis.ticks.x = element_blank(), 
+                      axis.text.x = element_blank())
+        
+        ViolinPlot = p2_2 +
+                stat_pvalue_manual(pwc.param[pwc.param$term == "Pathology", ], 
+                                   label = "P = {p.adj}", 
+                                   y.position = pvalue.y.position, 
+                                   step.increase = 0.1, 
+                                   tip.length = 0, 
+                                   hide.ns = TRUE)
+        
+        return(ViolinPlot)
+}
+
+## Displacement
+ViolinPlot.Displacement = PlotViolin(data_full = df.patho.2.raw,
+                                             data_mean = df.patho.2.mean, 
+                                               parameter = "Displacement", 
+                                     pvalue.y.position = 150)
+
+ViolinPlot.Displacement
+
+## MeanRadius_Std
+ViolinPlot.MeanRadius_Std = PlotViolin(parameter = "MeanRadius_Std", 
+                                     pvalue.y.position = 0.55)
+
+MeanRadius_Std
+
+## Eccentricity_Std
+ViolinPlot.Eccentricity_Std = PlotViolin(parameter = "Eccentricity_Std", 
+                                     pvalue.y.position = 0.3)
+
+ViolinPlot.Eccentricity_Std
+
+# 全パラメータのviolin plotをまとめて表示
+plot_grid(ViolinPlot.Displacement + theme(legend.position = "none"), 
+          ViolinPlot.MeanRadius_Std + theme(legend.position = "none"), 
+          ViolinPlot.Eccentricity_Std + theme(legend.position = "right", 
+                        legend.justification = "top"), 
+          nrow = 1, 
+          ncol = 3,
+          rel_widths = c(1, 1, 1.6))
+
+setwd("/Users/shuntaro/Documents/R/CW/230302_scBehavSeq_12081/R_output")
+getwd()
+ggsave("Violin_Select.tiff", width = 18, height = 6)    
+```
+
+### McFadden決定係数の計算
+
+```{r}
+# 予測確率の取得: 
+predicted_prob_glmManual = predict(glmManual, data_train, type = "prob") |>
+        bind_cols(y_train) |>
+        print()
+
+# モデルの対数尤度の計算:
+log_likelihood_glmManual = sum(predicted_prob_glmManual[, "Pathology"] * 
+                                 log(predicted_prob_glmManual[, "Thrombosis"]) + 
+                                 (1 - predicted_prob_glmManual[, "Pathology"]) * 
+                                 log(1 - predicted_prob_glmManual[, "Thrombosis"]))
+log_likelihood_glmManual
+
+# Nullモデルの対数尤度の計算: 
+null_model_prob_glmManual = rep(mean(as.matrix(y_train)), length(as.matrix(y_train)))
+null_model_prob_glmManual
+
+null_model_log_likelihood_glmManual = sum(as.matrix(y_train) * 
+                                            log(null_model_prob_glmManual) + 
+                                            (1 - as.matrix(y_train)) * 
+                                            log(1 - null_model_prob_glmManual))
+null_model_log_likelihood_glmManual
+
+# McFaddenの決定係数の計算: McFaddenの決定係数は、以下の式で計算される。
+mcfadden_r2_glmManual = 1 - (log_likelihood_glmManual / null_model_log_likelihood_glmManual)
+mcfadden_r2_glmManual
+```
+
+### テストデータに対する予測精度の検証
+
+```{r}
+pred_glmManual = predict(glmManual, data_test)
+head(pred_glmManual)
+confusionMatrix(reference = data_test$Pathology, 
+                data = pred_glmManual, 
+                mode = "everything", 
+                positive = "Thrombosis")
+```
+
+## Lassoロジスティック回帰モデルの作成
+
+```{r}
+# caretパッケージのtrain関数を用いてロジスティック回帰モデルを作成。
+## glmnetメソッドを用いることで、Lasso回帰などの正則化つき線形回帰モデルを作成できる。
+head(data_train)
+modelLookup("glmnet")
+
+# alpha = 1でLasso回帰を指定できる。
+train_grid1 = expand.grid(alpha = 1 , lambda = 10 ^ (1:10 * -1))
+lasso1 = train(data = data_train,
+             Pathology ~ .,
+             method = "glmnet",
+             family = "binomial",
+             trControl = trainControl(method = "cv"),
+             tuneGrid = train_grid1, 
+             metric = "Accuracy")
+
+lasso1
+```
+
+**`lambda`**の値が小さいほど、正則化の影響が小さくなり、過剰適合のリスクが高くなる。一方、**`lambda`**の値が大きいほど、正則化の影響が大きくなり、モデルの複雑性が低下し、過剰適合のリスクが低くなる。
+
+lasso1ではlambda 1e-02でAccuracyとKappaが最大になるので、その周辺で最適なlambdaを探索し直す。
+
+```{r}
+train_grid2 = expand.grid(alpha = 1 , lambda = seq(1e-3, 1e-1, by = 0.01))
+lasso2 = train(data = data_train,
+             Pathology ~ .,
+             method = "glmnet",
+             family = "binomial",
+             trControl = trainControl(method = "cv"),
+             tuneGrid = train_grid2, 
+             metric = "Accuracy")
+
+lasso2
+```
+
+### 選択されたパラメータへのアクセス
+
+生成したlamda2モデルにおいて、lambdaが0.011の時に、AccuracyとKappaがどちらも最大となる。
+
+この時モデルに選択されたパラメータを得るため、bestTune\$lambdaオブジェクトによってlambdaを指定し、finalModelオブジェクトにアクセスする。
+
+```{r}
+coef(lasso2$finalModel, s = lasso2$bestTune$lambda)
+
+# 選択されたパラメータで改めてロジスティック回帰を行い、係数の評価を行う。
+glmlasso = train(data = data_train, 
+             Pathology ~ Eccentricity_Mean +
+                    Solidity_Mean  +
+                     Compactness_Std +
+                     EquivalentDiameter_Std +
+                     MaximumRadius_Std +
+                     MeanRadius_Std +
+                     MedianRadius_Std +
+                     MinFeretDiameter_Std +
+                     DistanceTraveled_Std +
+                     Speed_Std +
+                     Linearity_Mean +
+                     MeanderRatio_Mean +
+                     FinalAge, 
+             method = "glm", 
+             family = binomial(), 
+             trControl = trainControl(method = "cv"))
+glmlasso
+summary(glmlasso)
+```
+
+### McFadden決定係数の計算
+
+```{r}
+# 予測確率の取得: 
+predicted_prob_lasso = predict(lasso2, data_train, type = "prob") |>
+        bind_cols(y_train) |>
+        print()
+
+# モデルの対数尤度の計算:
+log_likelihood_lasso = sum(predicted_prob_lasso[, "Pathology"] * 
+                                 log(predicted_prob_lasso[, "Thrombosis"]) + 
+                                 (1 - predicted_prob_lasso[, "Pathology"]) * 
+                                 log(1 - predicted_prob_lasso[, "Thrombosis"]))
+log_likelihood_lasso
+
+# Nullモデルの対数尤度の計算: 
+null_model_prob_lasso = rep(mean(as.matrix(y_train)), length(as.matrix(y_train)))
+null_model_prob_lasso
+
+null_model_log_likelihood_lasso = sum(as.matrix(y_train) * 
+                                            log(null_model_prob_lasso) + 
+                                            (1 - as.matrix(y_train)) * 
+                                            log(1 - null_model_prob_lasso))
+null_model_log_likelihood_lasso
+
+# McFaddenの決定係数の計算: McFaddenの決定係数は、以下の式で計算される。
+mcfadden_r2_lasso = 1 - (log_likelihood_lasso / null_model_log_likelihood_lasso)
+mcfadden_r2_lasso
+```
+
+### テストデータに対する予測精度の検証
+
+```{r}
+pred_lasso = predict(lasso2, data_test)
+head(pred_lasso)
+confusionMatrix(reference = data_test$Pathology, 
+                data = pred_lasso, 
+                mode = "everything", 
+                positive = "Thrombosis")
 ```

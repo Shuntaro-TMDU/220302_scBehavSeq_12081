@@ -47,15 +47,15 @@ gplots::heatmap.2(
         # cellnote = as.matrix(round(cor.mat, 1)),
         # notecol = "black", # cell label colour
         # notecex = 1, # cell label cex
-        cexCol = 0.7, # Column label cex
-        cexRow = 0.7, 
+        cexCol = 1, # Column label cex
+        cexRow = 1, 
         offsetRow = 0, 
         offsetCol = 0
 )
 
 dev.off()
 
-tiff("CorMat_2.tiff", width = 1200, height = 1200)
+tiff("CorMat_2.tiff", width = 1400, height = 1400)
 gplots::heatmap.2(
         x = as.matrix(CorMat2), 
         Rowv = DenCor2, 
@@ -74,12 +74,12 @@ gplots::heatmap.2(
         lhei = c(1, 5),
         key.title = NA, 
         key.xlab = "Correlation score",
-        margin = c(10, 10),
+        margin = c(14, 14),
         # cellnote = as.matrix(round(cor.mat, 1)),
         # notecol = "black", # cell label colour
         # notecex = 1, # cell label cex
-        cexCol = 0.7, # Column label cex
-        cexRow = 0.7, 
+        cexCol = 1.2, # Column label cex
+        cexRow = 1.2, 
         offsetRow = 0, 
         offsetCol = 0
 )
