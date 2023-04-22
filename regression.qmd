@@ -251,7 +251,7 @@ summary(glmManual)
 ### 抽出されたパラメータのラベルごとの比較
 
 ```{r}
-# 標準化する前のパラメータ表とメタデータのPathology列を結合したデータフレームdf.patho.2.rawを作成。
+# 標準化する前のパラメータ表とメタデータのPathology列を結合したデータフレーム 、df.patho.2.rawを作成。
 df.patho.2.raw = bind_cols(df.meta.1$Pathology, df.raw.2) |>
         rename(Pathology = "...1") |>
         mutate(Pathology = factor(Pathology, 
