@@ -87,9 +87,6 @@ ind_train = createDataPartition(y = df.patho.2$Pathology,
                                 list = FALSE)
 data_train = df.patho.2[ind_train, ]
 data_test = df.patho.2[-ind_train, ]
-
-mean(data_train$Pathology)
-mean(data_test$Pathology)
 ```
 
 ## ステップワイズ法でパラメータ選択を行ったロジスティック回帰モデルの作成
@@ -382,6 +379,109 @@ confusionMatrix(reference = data_test$Pathology,
                 mode = "everything", 
                 positive = "Thrombosis")
 ```
+
+### シグモイド曲線の描出
+
+```{r}
+# シグモイド関数を定義する。
+sigmoid = function(x1, x2, beta) {
+        z = beta[1] + beta[2]*x1 + beta[3]*x2
+        p = 1 / (1 + exp(-z))
+  return(p)
+}
+
+sigmoid(x1, x2_list[1], glmManual$finalModel$coefficients) # NonThrombosisが1、Thrombosisが0と設定されている。
+
+# MeanRadiusStdが"Thrombosis"または"NonThrombosisの平均値だった場合の"Displacement"によるシグモイド曲線を描出したい。
+x2_list = c(-1, 1)
+
+x1_range = range(data_test$Displacement) |>
+        print()
+
+x1 = data_test$Displacement
+x1
+
+threshold = 0.5 # glmnetでは閾値は0.5がデフォルト
+
+# stat_functionを使用して、sigmoid関数を適用することができる。
+# ggplot2でプロット
+ggplot() +
+  # シグモイド曲線を重ね合わせてプロット
+  geom_line(data = data.frame(x1 = x1), 
+            aes(x1, 
+                y = sigmoid(x1 = x1, 
+                                                                  x2 = x2_list[1], 
+                                                                  beta = glmManual$finalModel$coefficients)), 
+            color = "blue", linewidth = 2) +
+  geom_line(data = data.frame(x1 = x1), 
+            aes(x1, 
+                y = sigmoid(x1 = x1, 
+                                                                  x2 = x2_list[2], 
+                                                                  beta = glmManual$finalModel$coefficients)), 
+            color = "red", , linewidth = 2) +
+        xlim(-0.5, 0.25) +
+        mytheme1 +
+        geom_hline(yintercept = threshold, linetype = "dashed", color = "gray") +
+  # x2を凡例として表示
+  labs(x = "Displacement (z-score)", y = "Probability of NonThrombosis") +
+        annotate("text", x = 0, y = 0.3, label = "MeanRadius_Std \n (z-score)", hjust = 0, size = 6, family = "Arial", fontface = "bold") +
+  annotate("point", x = 0, y = 0.2, size = 2, colour = "blue") +
+  annotate("text", x = 0.02, y = 0.2, label = "-1", size = 5, vjust = 0.5) +
+        annotate("point", x = 0, y = 0.15, size = 2, colour = "red") +
+  annotate("text", x = 0.02, y = 0.15, label = "1", size = 5, vjust = 0.5) +
+  # グラフのタイトルを追加
+  ggtitle("Logistic regression model")
+
+setwd("/Users/shuntaro/Documents/R/CW/230302_scBehavSeq_12081/R_output")
+getwd()
+ggsave("LogisticRegression.tiff", width = 8, height = 6)
+```
+
+### 描出されたシグモイド曲線の解釈
+
+```{r}
+# "Probability of NonThrombosis" = 0.5 (threshold)の時のDisplacementの値を算出する。
+## シグモイド関数の逆関数sigmoid_inverseを定義する。
+sigmoid_inverse = function(y, beta, x2){
+        x1 = (log(y/(1-y)) - beta[1] - beta[3]*x2)/beta[2]
+        return(x1)
+}
+
+## MeanRadius_Std = -1 (z-score)の時
+Displacement_z_1 = sigmoid_inverse(y = 0.5 ,
+                beta = glmManual$finalModel$coefficients, 
+                x2 = -1)
+
+## MeanRadius_Std = 1 (z-score)の時
+Displacement_z_2 = sigmoid_inverse(y = 0.5 ,
+                beta = glmManual$finalModel$coefficients, 
+                x2 = 1)
+
+## 用いたMeanRadius_Stdと対応するDisplacementのz-scoreをマトリクス化
+Param_df = data.frame(MeanRadius_Std_z = c(-1, 1), 
+                      Displacement_z = c(Displacement_z_1, Displacement_z_2)) |>
+        print()
+
+Param_raw_summary = df.patho.2.raw |>
+        summarize(MeanRadius_Std_mean = mean(MeanRadius_Std), 
+                MeanRadius_Std_sd = sd(MeanRadius_Std), 
+Displacement_mean = mean(Displacement), 
+                Displacement_sd = sd(Displacement)) |>
+        print()
+
+Param_df = Param_df |>
+        mutate(MeanRadius_Std_org = MeanRadius_Std_z * Param_raw_summary$MeanRadius_Std_sd + Param_raw_summary$MeanRadius_Std_mean, 
+               Displacement_org = Displacement_z * Param_raw_summary$Displacement_sd + Param_raw_summary$Displacement_mean) |>
+        print()
+```
+
+結果より、以下の解釈となる。
+
+-   MeanRadius_Stdが0.01527の時、Displacementが1.649以上で"NonThrombosisと予測される。
+
+-   MeanRadius_Stdが0.1794の時、Displacementが0.2126以上で"NonThrombosisと予測される。
+
+すなわち、基本的にDisplacementが大きいほどNonThrombosisと予測されるが、その閾値はMeanRadiusが大きくなるほど小さくなる。
 
 ## Lassoロジスティック回帰モデルの作成
 
